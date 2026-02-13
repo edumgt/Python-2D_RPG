@@ -2,15 +2,21 @@
 
 간단한 2D RPG 프로토타입을 `pygame`으로 구현한 단일 파일 프로젝트입니다. 무작위 맵 생성, 타일 기반 충돌 처리, NPC 대화, 몬스터 조우, 턴 기반 전투 UI를 포함합니다.
 
+![alt text](image.png)
+
 ## 기술 스택
 
 - Python 3
 - pygame
 
 ## 실행 방법
-
-```bash
-python3 gg.py
+```
+python --version
+python -m venv venv
+venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install pygame
+python gg.py
 ```
 
 > `pygame`가 설치되어 있지 않다면 먼저 `pip install pygame`를 실행하세요.
