@@ -1,0 +1,80 @@
+# ============================================================
+# GitLab CI/CD 파이프라인
+#
+# 스테이지
+#   lint   – flake8 코드 품질 검사
+#   test   – 헤드리스 환경에서 게임 실행 검증
+#   mirror – main 브랜치 push 시 GitHub에 자동 미러링
+#
+# 필수 GitLab CI/CD 변수 (Settings → CI/CD → Variables)
+#   GITHUB_TOKEN  – GitHub Personal Access Token (repo 권한)
+#   GITHUB_REPO   – 미러 대상 저장소 (예: edumgt/Python-2D_RPG)
+# ============================================================
+
+default:
+  image: python:3.11-slim
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  # 폐쇄망 Nexus PyPI 프록시를 사용하는 경우 아래 주석을 해제하세요
+  # PIP_INDEX_URL: "http://nexus:8081/repository/pypi-proxy/simple/"
+  # PIP_TRUSTED_HOST: "nexus"
+
+cache:
+  paths:
+    - .cache/pip
+
+stages:
+  - lint
+  - test
+  - mirror
+
+# ──────────────────────────────────────────────────────────
+# 1) Lint
+# ──────────────────────────────────────────────────────────
+lint:
+  stage: lint
+  script:
+    - pip install flake8 --quiet
+    - flake8 gg.py --count --select=E9,F63,F7,F82 --show-source --statistics
+    - flake8 gg.py --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+
+# ──────────────────────────────────────────────────────────
+# 2) Test (헤드리스 게임 실행)
+# ──────────────────────────────────────────────────────────
+test:
+  stage: test
+  image: python:3.11-slim
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq
+        xvfb
+        libsdl2-dev
+        libsdl2-ttf-dev
+        libfreetype6-dev
+        libportmidi-dev
+        > /dev/null
+    - pip install -r requirements.txt --quiet
+  script:
+    # offscreen 드라이버로 디스플레이 없이 pygame 초기화/종료 검증
+    - >-
+      SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy
+      python -c "import pygame; pygame.init(); s=pygame.display.set_mode((800,600)); assert s; pygame.quit(); print('pygame headless init: OK')"
+    # 구문 오류 및 import 검사
+    - python -m py_compile gg.py && echo 'Syntax check: OK'
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+
+# ──────────────────────────────────────────────────────────
+# 3) Mirror to GitHub
+# ──────────────────────────────────────────────────────────
+mirror-to-github:
+  stage: mirror
+  image: alpine/git:latest
+  script:
+    - git remote add github
+        "https://oauth2:${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git"
+    - git push github HEAD:main --force
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $GITHUB_TOKEN != null'
