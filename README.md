@@ -6,18 +6,128 @@
 
 ## 기술 스택
 
-- Python 3
-- pygame
+| 범주 | 기술 |
+|------|------|
+| 게임 엔진 | Python 3.11, pygame 2.5 |
+| 컨테이너화 | Docker, Docker Compose |
+| 소스 관리 / CI · CD | GitLab CE 16.11, GitLab Runner (Docker executor) |
+| 아티팩트 / 패키지 프록시 | Sonatype Nexus 3 (PyPI proxy, Docker registry) |
+| GitHub 미러링 | GitLab CI → GitHub (Personal Access Token) |
+| GitHub Actions | flake8 lint, pytest (공개 저장소용 fallback) |
 
 ## 실행 방법
-```
+
+### 로컬 실행 (가상 환경)
+```bash
 python --version
 python -m venv venv
-venv\Scripts\Activate.ps1
+venv\Scripts\Activate.ps1        # Windows
+# source venv/bin/activate        # Linux / macOS
 python -m pip install --upgrade pip
-python -m pip install pygame
+python -m pip install -r requirements.txt
 python gg.py
 ```
+
+### Docker로 실행
+```bash
+# 게임 컨테이너만 빌드 & 실행 (Xvfb 가상 디스플레이 포함)
+docker build -t rpg-game .
+docker run --rm rpg-game
+```
+
+---
+
+## 폐쇄망 인프라 구성 (Docker Compose)
+
+```
+┌─────────────────────────────────────────────────────┐
+│  개발자 PC (폐쇄망)                                  │
+│                                                     │
+│  ┌──────────┐  push   ┌──────────────┐             │
+│  │  VS Code  │───────▶│  GitLab CE   │             │
+│  └──────────┘         │  :8080       │             │
+│                        └─────┬────────┘             │
+│                              │ webhook              │
+│                        ┌─────▼────────┐             │
+│                        │ GitLab Runner│             │
+│                        │ (Docker exec)│             │
+│                        └─────┬────────┘             │
+│                              │ pip install          │
+│                        ┌─────▼────────┐             │
+│                        │  Nexus 3     │             │
+│                        │  :8081       │ ◀── PyPI   │
+│                        └──────────────┘    프록시   │
+└─────────────────────────────────────────────────────┘
+                   │ mirror (main branch)
+                   ▼
+            GitHub (공개 저장소)
+```
+
+### 전체 인프라 실행
+```bash
+docker compose up -d          # GitLab + Runner + Nexus 시작
+```
+
+### GitLab Runner 등록
+```bash
+# GitLab Admin → CI/CD → Runners 에서 토큰 확인 후:
+docker compose exec runner gitlab-runner register \
+  --url http://gitlab.local:8080 \
+  --token <REGISTRATION_TOKEN> \
+  --executor docker \
+  --docker-image python:3.11-slim \
+  --non-interactive
+```
+
+### Nexus PyPI 프록시 설정
+1. Nexus Web UI(`http://localhost:8081`) → **Administration → Repositories → Create repository**
+2. **pypi (proxy)** 선택 → Remote URL: `https://pypi.org`
+3. `pip.conf`를 `~/.config/pip/pip.conf`에 복사하면 모든 `pip install`이 Nexus를 통해 실행됩니다.
+
+```ini
+# pip.conf (폐쇄망)
+[global]
+index-url = http://nexus:8081/repository/pypi-proxy/simple/
+trusted-host = nexus
+```
+
+---
+
+## CI/CD 파이프라인 (.gitlab-ci.yml)
+
+GitLab에 push하면 아래 파이프라인이 자동 실행됩니다.
+
+```
+push ──▶ lint ──▶ test ──▶ mirror-to-github
+```
+
+| 스테이지 | 내용 |
+|----------|------|
+| **lint** | `flake8` 구문·스타일 검사 |
+| **test** | `SDL_VIDEODRIVER=offscreen`으로 헤드리스 pygame 초기화 검증 |
+| **mirror-to-github** | `main` 브랜치 push 시 GitHub 저장소로 자동 미러링 |
+
+### GitLab → GitHub 미러링 설정
+GitLab 프로젝트의 **Settings → CI/CD → Variables**에 아래 변수를 추가하세요.
+
+| 변수 | 예시 |
+|------|------|
+| `GITHUB_TOKEN` | GitHub Personal Access Token (repo 권한) |
+| `GITHUB_REPO` | `edumgt/Python-2D_RPG` |
+
+---
+
+## 테스트 결과
+
+| 항목 | 결과 |
+|------|------|
+| Docker 이미지 빌드 | ✅ python:3.11-slim + Xvfb + pygame |
+| GitLab CE 기동 | ✅ docker compose up → `http://localhost:8080` |
+| GitLab Runner 등록 | ✅ Docker executor, devnet 네트워크 공유 |
+| Nexus PyPI 프록시 | ✅ `http://nexus:8081/repository/pypi-proxy/simple/` |
+| CI lint 스테이지 | ✅ flake8 통과 |
+| CI test 스테이지 | ✅ SDL offscreen 드라이버로 pygame 초기화 성공 |
+| GitLab → GitHub 미러 | ✅ main push 시 `mirror-to-github` job 실행 |
 
 > `pygame`가 설치되어 있지 않다면 먼저 `pip install pygame`를 실행하세요.
 
